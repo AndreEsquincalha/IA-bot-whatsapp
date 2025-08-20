@@ -1,2 +1,4 @@
 /venv
 .env
+/rag_files/processed/
+/vectorstore_data
