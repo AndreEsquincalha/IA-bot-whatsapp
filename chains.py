@@ -11,13 +11,20 @@ from config import (
 from vectorstore import get_vectorstore
 from prompts import contextualize_prompt, qa_prompt
 from memory import get_session_history
+from elasticstore import *
 
 def get_rag_chain():
     llm = ChatOpenAI(
         model=OPENAI_MODEL_NAME,
         temperature=OPENAI_MODEL_TEMPERATURE,
     )
-    retriever = get_vectorstore().as_retriever()
+    
+    retriever = get_elastic_retriever(
+        k_broad=40,          
+        num_candidates=100,  
+        k_final=10           
+    )
+
     history_aware_chain = create_history_aware_retriever(llm, retriever, contextualize_prompt)
     question_answer_chain = create_stuff_documents_chain(
         llm=llm,

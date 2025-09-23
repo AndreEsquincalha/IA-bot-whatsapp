@@ -4,6 +4,7 @@ import shutil
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
+from langchain_ollama import OllamaEmbeddings
 from langchain_chroma import Chroma
 
 from config import RAG_FILES_DIRS, VECTOR_STORE_PATH
@@ -43,6 +44,10 @@ def get_vectorstore():
         )
 
     return Chroma(
-        embedding_function=OpenAIEmbeddings(),
+        #embedding_function=OpenAIEmbeddings(),
+        embedding_function = OllamaEmbeddings(
+            base_url="http://172.16.200.20:11434",
+            model="bge-m3",
+        ),
         persist_directory=VECTOR_STORE_PATH,
     )
