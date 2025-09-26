@@ -7,7 +7,7 @@ from config import REDIS_URL, BUFFER_KEY_SUFIX, DEBOUNCE_SECONDS, BUFFER_TTL
 from evolution_api import send_whatsapp_message
 from chains import get_conversational_rag_chain
 
-redis_client = redis.Redis.from_url(REDIS_URL, decoce_responses=True)
+redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
 conversational_rag_chain = get_conversational_rag_chain()
 debouce_tasks = defaultdict(asyncio.Task)
 
@@ -40,10 +40,11 @@ async def handle_debouce(chat_id):
         if full_message:
             log(f'Enviando mensagem agrupada para {chat_id}: {full_message}')
 
-            ai_response  = conversational_rag_chain.invoke(
-                input={'input': full_message},
-                config={'configurable': {'session_id':chat_id}},
-            )['answer']
+            res = await conversational_rag_chain.ainvoke(
+                {'input': full_message},
+                config={'configurable': {'session_id': chat_id}},
+            )
+            ai_response = res['answer']
 
             send_whatsapp_message(
                 number=chat_id,

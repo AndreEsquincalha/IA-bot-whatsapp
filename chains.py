@@ -1,44 +1,111 @@
-from langchain.chains import create_history_aware_retriever, create_retrieval_chain
-from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain_core.runnables.history import RunnableWithMessageHistory
+# chains.py
+from typing import Dict, Any, List
+import os
+import redis.asyncio as redis
+
 from langchain_openai import ChatOpenAI
+from langchain_core.runnables import RunnableLambda
+from langchain_core.runnables.history import RunnableWithMessageHistory
 
 from config import (
     OPENAI_MODEL_NAME,
     OPENAI_MODEL_TEMPERATURE,
+    REDIS_URL,
 )
-
-from vectorstore import get_vectorstore
 from prompts import contextualize_prompt, qa_prompt
 from memory import get_session_history
-from elasticstore import *
+from retriever_api import call_retrieve
+from topics import LABEL_TO_DOC_TOPIC  # usa mapping vindo do .env
+
+DEFAULT_INDEX = os.getenv("RETRIEVER_DEFAULT_INDEX", "manuais")
+DEFAULT_DOC_TOPIC = os.getenv("RETRIEVER_DEFAULT_DOC_TOPIC", "Geral")
+
+# Redis para ler o tópico atual
+rds = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+
+def _state_key(chat_id: str) -> str:
+    return f"iaires:state:{chat_id}"
+
+async def _get_doc_topic_for_session(chat_id: str) -> str:
+    st = await rds.hgetall(_state_key(chat_id))
+    topic_label = (st.get("topic") or "").strip() if st else ""
+    return LABEL_TO_DOC_TOPIC.get(topic_label, DEFAULT_DOC_TOPIC)
+
+def _build_context_from_docs(docs: List[Dict[str, Any]]) -> str:
+    """Concatena os documentos da API em um único contexto textual."""
+    parts = []
+    for d in docs:
+        md = d.get("metadata", {}) or {}
+        src = md.get("source", "?")
+        pg  = md.get("page", "?")
+        kind = md.get("kind", "?")
+        score = md.get("score", None)
+        head = f"[Source: {src} | página: {pg} | tipo: {kind}"
+        if isinstance(score, (int, float)):
+            head += f" | score: {score:.3f}"
+        head += "]"
+        content = d.get("page_content") or ""
+        parts.append(f"{head}\n{content}")
+    return "\n\n".join(parts)
+
+async def _contextualize_question(llm: ChatOpenAI, question: str, history_messages):
+    msgs = contextualize_prompt.format_messages(chat_history=history_messages, input=question)
+    resp = await llm.ainvoke(msgs)
+    return (resp.content or question).strip()
+
+async def _qa_with_context(llm: ChatOpenAI, question: str, context: str, history_messages):
+    msgs = qa_prompt.format_messages(context=context, input=question, chat_history=history_messages)
+    resp = await llm.ainvoke(msgs)
+    return (resp.content or "").strip()
 
 def get_rag_chain():
     llm = ChatOpenAI(
         model=OPENAI_MODEL_NAME,
         temperature=OPENAI_MODEL_TEMPERATURE,
     )
-    
-    retriever = get_elastic_retriever(
-        k_broad=40,          
-        num_candidates=100,  
-        k_final=10           
-    )
 
-    history_aware_chain = create_history_aware_retriever(llm, retriever, contextualize_prompt)
-    question_answer_chain = create_stuff_documents_chain(
-        llm=llm,
-        prompt=qa_prompt,
+    async def _run(inputs: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        inputs: {'input': <pergunta>}
+        config: {'configurable': {'session_id': <chat_id>}}
+        """
+        question = (inputs.get("input") or "").strip()
+        if not question:
+            return {"answer": "Não recebi uma pergunta válida."}
+
+        chat_id = (config.get("configurable", {}) or {}).get("session_id", "")
+        history = get_session_history(chat_id)
+
+        # 1) contextualiza pergunta com o histórico
+        contextualized = await _contextualize_question(llm, question, history.messages)
+
+        # 2) resolve doc_topic e index a partir do estado do usuário
+        doc_topic = await _get_doc_topic_for_session(chat_id)
+        index     = DEFAULT_INDEX
+
+        # 3) chama sua API retriever
+        data = await call_retrieve(contextualized, index=index, doc_topic=doc_topic)
+
+        # 4) usa 'context' se vier pronto; senão monta com 'docs'
+        docs = data.get("docs", []) or []
+        context_text = data.get("context") or _build_context_from_docs(docs)
+
+        # 5) QA com stuffing do contexto
+        answer = await _qa_with_context(llm, contextualized, context_text, history.messages)
+
+        return {
+            "answer": answer,
+            "chosen_source": data.get("chosen_source"),
+            "n_docs": len(docs),
+        }
+
+    return RunnableWithMessageHistory(
+        runnable=RunnableLambda(_run),
+        get_session_history=get_session_history,
+        input_messages_key="input",
+        history_messages_key="chat_history",
+        output_messages_key="answer",
     )
-    return create_retrieval_chain(history_aware_chain, question_answer_chain)
 
 def get_conversational_rag_chain():
-    rag_chain = get_rag_chain()
-    return RunnableWithMessageHistory(
-        runnable=rag_chain,
-        get_session_history=get_session_history,
-        input_messages_key='input',
-        history_messages_key='chat_history',
-        output_messages_key='answer',
-    )
-    
+    return get_rag_chain()

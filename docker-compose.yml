@@ -45,6 +45,8 @@ services:
       - "8000:8000"
     env_file:
       - .env
+    environment:
+      - RETRIEVER_BASE_URL=http://retriever-api:9020
     depends_on:
       - evolution-api
       - redis
@@ -52,9 +54,15 @@ services:
     volumes:
       - ./vectorstore_data:/app/vectorstore
       - ./rag_files:/app/rag_files
+
 volumes:
   evolution_instances:
   postgres_data:
   redis:
   vectorstore_data:
   rag_files:
+
+networks:
+  default:
+    external: true
+    name: iaires-net
