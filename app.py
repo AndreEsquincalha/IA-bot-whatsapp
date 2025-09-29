@@ -168,17 +168,35 @@ async def send_projects_menu(chat_id: str):
     if not ps:
         await send_whatsapp_message(
             number=chat_id,
-            text="Você não tem permissão para acessar projetos. Fale com o administrador."
+            text="Você não tem permissão para acessar as informações. Por gentileza fale com o administrador."
         )
         await reset_to_projects(chat_id)
         return
     menu = build_project_menu_for(ps)
     await send_whatsapp_message(number=chat_id, text=menu)
-    print("[STATE][BEFORE]", chat_id, await get_user_state(chat_id))
     await set_user_state(chat_id, awaiting_project=True, awaiting_topic=False, topic=None, header_pending=False)
-    print("[STATE][AFTER]", chat_id, await get_user_state(chat_id))
 
 async def send_topics_menu(chat_id: str):
+    st = await get_user_state(chat_id)
+
+    # Sem projeto -> redireciona
+    if st.get("awaiting_project") or not st.get("project_id"):
+        await send_whatsapp_message(number=chat_id, text="Antes, escolha um *Projeto*.")
+        await reset_to_projects(chat_id)
+        await send_projects_menu(chat_id)
+        return
+
+    # Projeto que pula tópicos -> redireciona
+    if project_skip_topics(st["project_id"]):
+        await send_whatsapp_message(
+            number=chat_id,
+            text="O projeto selecionado não possui *Tópicos*. Escolha um *Projeto* diferente para ver tópicos."
+        )
+        await reset_to_projects(chat_id)
+        await send_projects_menu(chat_id)
+        return
+
+    # Caso normal
     menu = build_topics_menu()
     await send_whatsapp_message(number=chat_id, text=menu)
     await set_user_state(chat_id, awaiting_topic=True, header_pending=False)
@@ -211,6 +229,8 @@ async def webhook(request: Request):
 
     text = text.strip()
 
+    state = await get_user_state(chat_id)
+
     # -------- Comandos de troca --------
     if is_change_project_command(text):
         await reset_to_projects(chat_id)
@@ -218,11 +238,30 @@ async def webhook(request: Request):
         return {"status": "menu_projects"}
 
     if is_change_topic_command(text):
+        # pega o estado atual
+        state = await get_user_state(chat_id)
+
+        # Sem projeto escolhido -> volta para projetos
+        if state.get("awaiting_project") or not state.get("project_id"):
+            await send_whatsapp_message(number=chat_id, text="Antes, escolha um *Projeto*.")
+            await reset_to_projects(chat_id)
+            await send_projects_menu(chat_id)
+            return {"status": "menu_topics_blocked_no_project"}
+
+        # Projeto atual pula tópicos (ex.: Manuais) -> manda para projetos
+        if project_skip_topics(state["project_id"]):
+            await send_whatsapp_message(
+                number=chat_id,
+                text="Esse Índice não possui *Tópicos*. Escolha um *Projeto*, para ver os seu respectivos tópicos."
+            )
+            await reset_to_projects(chat_id)
+            await send_projects_menu(chat_id)
+            return {"status": "menu_topics_blocked_skip_project"}
+
+        # Caso normal: pode abrir menu de tópicos
         await reset_to_topics(chat_id)
         await send_topics_menu(chat_id)
         return {"status": "menu_topics"}
-
-    state = await get_user_state(chat_id)
 
     # -------- Fase 1: aguardando escolha do PROJETO --------
     if state["awaiting_project"]:
@@ -248,8 +287,8 @@ async def webhook(request: Request):
                 )
                 await send_whatsapp_message(
                     number=chat_id,
-                    text=f"Projeto definido: *{proj['code']} - {proj['label']}*.\n"
-                        "Pode enviar sua dúvida."
+                    text=f"Índice definido: *{proj['code']} - {proj['label']}*.\n"
+                        "Tudo certo!\n\nAgora me diga, no que posso te ajudar hoje?"
                 )
                 return {"status": "project_selected_skip_topics", "project_index": idx}
 
@@ -286,11 +325,11 @@ async def webhook(request: Request):
             await send_whatsapp_message(number=chat_id, text=f"Tópico definido: *{label}*.")
             await send_whatsapp_message(
                 number=chat_id,
-                text="Certo! Agora me diga o que você precisa."
+                text="Tudo certo!\nAgora me diga, no que posso te ajudar hoje?"
             )
             return {"status": "topic_selected", "topic": label}
         else:
-            await send_whatsapp_message(number=chat_id, text="Responda com o *número* do tópico.")
+            await send_topics_menu(chat_id)
             return {"status": "awaiting_topic_number"}
 
     # -------- Conversa livre (já tem projeto + tópico) --------

@@ -15,13 +15,14 @@ _projects_raw = _load_json("projects.json")["projects"]
 PROJECTS_BY_ID = {int(p["id"]): p for p in _projects_raw}
 
 def build_project_menu_for(user_projects: List[int]) -> str:
-    lines = ["Escolha o *Projeto* primeiro:", ""]
+    lines = ["Bem vindo ao assistente AI-res,", ""]
+    lines.append("Informe sobre o que você deseja falar:\n")
     for pid in user_projects:
         p = PROJECTS_BY_ID.get(pid)
         if p:
             lines.append(f'{p["id"]} - {p["code"]} - {p["label"]}')
     lines.append("")
-    lines.append("Responda com o *número* do projeto.")
+    lines.append("Responda com o **número** referente ao que você deseja.")
     return "\n".join(lines)
 
 def project_skip_topics(pid: int) -> bool:
@@ -52,9 +53,9 @@ TOPICS_BY_ID = {int(t["id"]): t["label"] for t in _topics_raw}
 LABEL_TO_DOC_TOPIC = {t["label"]: t["doc_topic"] for t in _topics_raw}
 
 def build_topics_menu() -> str:
-    lines = ["Agora escolha o *Tópico* (assunto):", ""]
+    lines = ["Agora escolha o **Tópico**:", ""]
     for t in _topics_raw:
-        lines.append(f'{t["id"]}. {t["label"]}')
+        lines.append(f'{t["id"]} - {t["label"]}')
     lines.append("")
-    lines.append("Responda com o *número* do tópico.")
+    lines.append("Responda com o **número** referente ao tópico.")
     return "\n".join(lines)
