@@ -15,21 +15,32 @@ from config import (
 from prompts import contextualize_prompt, qa_prompt
 from memory import get_session_history
 from retriever_api import call_retrieve
-from topics import LABEL_TO_DOC_TOPIC  # usa mapping vindo do .env
+from acl_config import LABEL_TO_DOC_TOPIC  # mapeia label -> doc_topic
 
+# Defaults caso algo falhe/esteja ausente no estado
 DEFAULT_INDEX = os.getenv("RETRIEVER_DEFAULT_INDEX", "manuais")
 DEFAULT_DOC_TOPIC = os.getenv("RETRIEVER_DEFAULT_DOC_TOPIC", "Geral")
 
-# Redis para ler o tópico atual
+# Redis para ler estado atual (projeto/tópico) da sessão
 rds = redis.Redis.from_url(REDIS_URL, decode_responses=True)
 
 def _state_key(chat_id: str) -> str:
     return f"iaires:state:{chat_id}"
 
 async def _get_doc_topic_for_session(chat_id: str) -> str:
+    """
+    Retorna o doc_topic a partir do label de tópico salvo no estado.
+    """
     st = await rds.hgetall(_state_key(chat_id))
     topic_label = (st.get("topic") or "").strip() if st else ""
     return LABEL_TO_DOC_TOPIC.get(topic_label, DEFAULT_DOC_TOPIC)
+
+async def _get_index_for_session(chat_id: str) -> str:
+    """
+    Retorna o índice (Elasticsearch) definido pelo projeto escolhido.
+    """
+    st = await rds.hgetall(_state_key(chat_id))
+    return (st.get("project_index") or "").strip() if st else ""
 
 def _build_context_from_docs(docs: List[Dict[str, Any]]) -> str:
     """Concatena os documentos da API em um único contexto textual."""
@@ -37,7 +48,7 @@ def _build_context_from_docs(docs: List[Dict[str, Any]]) -> str:
     for d in docs:
         md = d.get("metadata", {}) or {}
         src = md.get("source", "?")
-        pg  = md.get("page", "?")
+        pg = md.get("page", "?")
         kind = md.get("kind", "?")
         score = md.get("score", None)
         head = f"[Source: {src} | página: {pg} | tipo: {kind}"
@@ -81,10 +92,21 @@ def get_rag_chain():
 
         # 2) resolve doc_topic e index a partir do estado do usuário
         doc_topic = await _get_doc_topic_for_session(chat_id)
-        index     = DEFAULT_INDEX
+        index = await _get_index_for_session(chat_id) or DEFAULT_INDEX
 
         # 3) chama sua API retriever
-        data = await call_retrieve(contextualized, index=index, doc_topic=doc_topic)
+        try:
+            data = await call_retrieve(contextualized, index=index, doc_topic=doc_topic)
+        except Exception as e:
+            # Retorno amigável caso a retriever falhe
+            return {
+                "answer": f"Não consegui acessar a base de conhecimento agora (erro na retriever). "
+                          f"Tente novamente em instantes.\n\nDetalhes: {e}",
+                "chosen_source": None,
+                "n_docs": 0,
+                "index": index,
+                "doc_topic": doc_topic,
+            }
 
         # 4) usa 'context' se vier pronto; senão monta com 'docs'
         docs = data.get("docs", []) or []
@@ -97,6 +119,8 @@ def get_rag_chain():
             "answer": answer,
             "chosen_source": data.get("chosen_source"),
             "n_docs": len(docs),
+            "index": index,
+            "doc_topic": doc_topic,
         }
 
     return RunnableWithMessageHistory(

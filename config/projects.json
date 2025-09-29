@@ -1,0 +1,7 @@
+{
+  "projects": [
+    { "id": 1, "code": "Manuais", "label": "Equipamentos", "index": "manuais", "skip_topics": true },
+    { "id": 2, "code": "01.2024.01", "label": "BAMIN",   "index": "01.2024.01-bamin" },
+    { "id": 3, "code": "09.2024.01", "label": "CSN-MG", "index": "09.2024.01-csn(mg)" }
+  ]
+}

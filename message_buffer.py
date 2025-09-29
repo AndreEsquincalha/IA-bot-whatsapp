@@ -36,7 +36,7 @@ async def handle_debouce(chat_id):
         buffer_key = f'{chat_id}{BUFFER_KEY_SUFIX}'
         messages = await redis_client.lrange(buffer_key, 0, -1)
 
-        full_message = ''.join(messages).strip()
+        full_message = '\n'.join(messages).strip()
         if full_message:
             log(f'Enviando mensagem agrupada para {chat_id}: {full_message}')
 
@@ -46,7 +46,7 @@ async def handle_debouce(chat_id):
             )
             ai_response = res['answer']
 
-            send_whatsapp_message(
+            await send_whatsapp_message(
                 number=chat_id,
                 text=ai_response,
             )
